@@ -61,6 +61,7 @@ def getcentosurl(name, arch):
     if arch == 'x86_64':
         arch = 'x86_64-latest'
     surl = 'http://buildlogs.centos.org/centos/7/os/' + arch + '/Packages/'
+    res = None
     if htmlpath != None:
         with open(htmlpath, 'r') as html:
             soup = BeautifulSoup(html, 'html.parser')
@@ -189,6 +190,7 @@ def getpath(rpmname, system, arch):
 # 根据操作系统确定目录分隔符
 def getifs():
     currentos = platform.system()
+    print(currentos)
     if currentos == 'Windows':
         ifs = '\\'
     else:
@@ -196,8 +198,10 @@ def getifs():
 
 # 错误日志文件添加记录
 def addlog(str):
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
     with open('logs' + ifs + time.strftime('%Y%m%d', time.localtime()) + '.log', 'a') as log:
-        log.write(str + '\n')
+        log.write(time.strftime('%H:%M:%S-', time.localtime()) + str + '\n')
 
 # 检查是否存在当天更新的CentOS官网RPM列表的html，如果不存在则获取html并保存，返回html的路径
 def gethtmlpath(surl, arch):
