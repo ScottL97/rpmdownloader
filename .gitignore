@@ -1,0 +1,10 @@
+# download lists
+*.txt
+*.csv
+
+# download path
+Fedora/
+CentOS/
+
+# logs
+logs/

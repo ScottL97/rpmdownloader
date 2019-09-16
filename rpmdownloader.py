@@ -2,22 +2,21 @@ import requests
 import time
 import re
 import sys
+import os
+import platform
+import time
 from bs4 import BeautifulSoup
 
-rpms = []
+ifdebug = False # debug模式只打印最后下载链接的请求头，不真正下载
 archs = ['aarch64', 'x86_64']
-systems = ['Fedora', 'CentOS', 'Mageia']
+systems = ['Fedora', 'OpenSuSE', 'CentOS']
 searchurl = 'http://rpmfind.net/linux/rpm2html/search.php?'
-downloadurl = 'http://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/aarch64/os/Packages/'
+downloadurl = 'http://rpmfind.net'
+ifs = '/' # 默认为Linux系统path分隔符
 VALID_LENGTH = 2000 # 用于判断downloadurl是否有效
 
 '''
-[get url]: /linux/RPM/fedora/devel/rawhide/aarch64/g/gcc-9.2.1-1.fc32.aarch64.html
 [download url]: http://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/aarch64/os/Packages/g/gcc-9.2.1-1.fc32.aarch64.rpm
-                http://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/aarch64/os/Packages/g/gcc-4.8.5-36.el7.x86_64.rpm
-
-[get url]: /linux/RPM/fedora/devel/rawhide/aarch64/b/bash-5.0.7-3.fc31.aarch64.html
-[download url]: http://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/aarch64/os/Packages/b/bash-5.0.7-3.fc31.aarch64.rpm
 '''
 
 # 下载链接的请求参数
@@ -29,35 +28,67 @@ class Requestparams:
 
 # 通过解析html获取rpm的下载链接
 def getdownloadurl(name, system, arch):
-    # tmpurl = url + getfirstletter(name) + '/' + name + getversion(name) + '.' + arch + '.rpm'
-    surl = searchurl + 'query=' + name + '&submit=Search+...&system=' + system + '&arch=' + arch
-    html = requests.get(surl)
-    if html.status_code == 200:
-        soup = BeautifulSoup(html.text, 'html.parser')
-        tbody = soup.find_all('tbody')[1]
-        children = list(tbody.find_all('a'))
-        link = children[0]['href']
-        print('[Get url]:\n%s' % link)
-        matchObj = re.search(r'.*(/.*).html', link)
-        durl = downloadurl + name[0] + matchObj.group(1) + '.rpm'
-        print('[Download url]:\n%s' % durl)
-        return durl
+    link = None
+    # CentOS从CentOS官网获取RPM，其他系统从rpmfind上获取
+    if system == 'CentOS':
+        link = getcentosurl(name, arch)
     else:
+        surl = searchurl + 'query=' + name + '&submit=Search+...&system=' + system + '&arch=' + arch
+        html = requests.get(surl)
+        if html.status_code == 200:
+            soup = BeautifulSoup(html.text, 'html.parser')
+            if len(soup.find_all('tbody')) > 1:
+                tbody = soup.find_all('tbody')[1]
+                children = list(tbody.find_all('a'))
+                # print(children)
+                for child in children:
+                    matchObj = re.search(r'.*(.rpm)', child['href'])
+                    if matchObj != None:
+                        link = downloadurl + child['href']
+                        break
+    if link == None:
+        addlog('[Failed to get download url]: ' + name + '-' + system + '-' + arch)
         print('[Failed to get download url]')
-        return None
+    return link
     
+# CentOS系统的RPM从CentOS官方获取
+def getcentosurl(name, arch):
+    # https://buildlogs.centos.org/centos/7/os/aarch64/Packages/bash-4.2.46-12.el7.aarch64.rpm
+    
+    surl = 'http://buildlogs.centos.org/centos/7/os/' + arch + '/Packages/'
+    htmlpath = gethtmlpath(surl, arch)
+    # 上面的语句必须先执行，这里修改arch是因为网站URL中arch为x86_64-latest
+    if arch == 'x86_64':
+        arch = 'x86_64-latest'
+    surl = 'http://buildlogs.centos.org/centos/7/os/' + arch + '/Packages/'
+    if htmlpath != None:
+        with open(htmlpath, 'r') as html:
+            soup = BeautifulSoup(html, 'html.parser')
+            links = list(soup.find_all('a'))
+            for link in links:
+                matchObj = re.match(r'' + name + '\-[0-9].*', link['href'])
+                if matchObj != None:
+                    res = surl + link['href']
+    return res
 
 # 通过getdownloadurl函数获得的url下载rpm
-def downloadrpm(rpmname, durl):
-    r = requests.get(durl, stream=True)
-    print(r.headers)
-
-    if int(r.headers['Content-Length']) > VALID_LENGTH:
-        print('[Downloading]:\n%s' % durl)
-        with open(rpmname, 'wb') as f:
-            f.write(r.content)
+def downloadrpm(rpmpath, durl):
+    # 如果文件已存在且大小不为0，不重复下载
+    if os.path.isfile(rpmpath):
+        if os.path.getsize(rpmpath) > 0:
+            print('[Exist]:\n%s' % rpmpath)
     else:
-        print('[Wrong url]:\n%s' % durl)
+        r = requests.get(durl, stream=True)
+        if ifdebug == False:
+            if int(r.headers['Content-Length']) > VALID_LENGTH:
+                print('[Downloading]:\n%s' % durl)
+                with open(rpmpath, 'wb') as f:
+                    f.write(r.content)
+            else:
+                addlog('[Wrong url]: ' + durl)
+                print('[Wrong url]:\n%s' % durl)
+        else:
+            print(r.headers)
 
 def printmenu():
     print('*************************')
@@ -71,6 +102,7 @@ def getparams():
     name = input('请输入rpm名称：')
     matchObj = re.match(r'([a-zA-Z0-9\-]+)', name)
     if matchObj == None:
+        addlog('[Wrong param]: ' + name)
         print('[Wrong param]: %s' % name)
         return None
     print('-------------------------')
@@ -81,6 +113,7 @@ def getparams():
     system = input('请输入system编号：')
     matchObj = re.match(r'([0-9]+)', system)
     if matchObj == None:
+        addlog('[Wrong param]: ' + system)
         print('[Wrong param]: %s' % system)
         return None
     print('-------------------------')
@@ -91,6 +124,7 @@ def getparams():
     arch = input('请输入arch编号：')
     matchObj = re.match(r'([0-9]+)', arch)
     if matchObj == None:
+        addlog('[Wrong param]: ' + arch)
         print('[Wrong param]: %s' % arch)
         return None
     
@@ -102,19 +136,21 @@ def downloadbyfile():
     typeoffile = matchObj.group(1)
     print(typeoffile)
     if typeoffile == 'csv':
-        ifs = ','
+        paramifs = ','
     else:
-        ifs = ' '
+        paramifs = ' '
     with open(sys.argv[1], "r") as f:
         for line in f:
-            fparams = line.strip().split(ifs)
+            print('-------------------------')
+            fparams = line.strip().split(paramifs)
             print(fparams)
             tmpdownloadurl = getdownloadurl(fparams[0], fparams[1], fparams[2])
             if tmpdownloadurl == None:
                 continue
             matchObj = re.search(r'.*/(.*.rpm)', tmpdownloadurl)
             rpmname = matchObj.group(1)
-            downloadrpm(rpmname, tmpdownloadurl)
+            path = getpath(rpmname, fparams[1], fparams[2])
+            downloadrpm(path, tmpdownloadurl)
 
 # 通过命令行下载rpm
 def downloadbycli():
@@ -136,9 +172,57 @@ def downloadbycli():
                 rpmname = matchObj.group(1)
                 ifdownload = input('Download %s(y/n): ' % rpmname)
                 if ifdownload == 'y':
-                    downloadrpm(rpmname, tmpdownloadurl)
+                    path = getpath(rpmname, systems[int(rparams.system) - 1], archs[int(rparams.arch) - 1])
+                    downloadrpm(path, tmpdownloadurl)
 
+# 检查准备下载的RPM有没有相应的目录，如果存在就返回相应路径，如果不存在则创建后返回
+def getpath(rpmname, system, arch):
+    path = system + ifs + arch
+    ifExist = os.path.exists(path)
+    if not ifExist:
+        os.makedirs(path)
+
+    path = path + ifs + rpmname
+    print('[Path]: \n%s' % path)
+    return path
+
+# 根据操作系统确定目录分隔符
+def getifs():
+    currentos = platform.system()
+    if currentos == 'Windows':
+        ifs = '\\'
+    else:
+        ifs = '/'
+
+# 错误日志文件添加记录
+def addlog(str):
+    with open('logs' + ifs + time.strftime('%Y%m%d', time.localtime()) + '.log', 'a') as log:
+        log.write(str + '\n')
+
+# 检查是否存在当天更新的CentOS官网RPM列表的html，如果不存在则获取html并保存，返回html的路径
+def gethtmlpath(surl, arch):
+    path = 'CentOS' + ifs + arch
+    ifExist = os.path.exists(path)
+    if not ifExist:
+        os.makedirs(path)
+
+    htmlpath = path + ifs + time.strftime('%Y%m%d', time.localtime()) + '.html'
+    ifExist = os.path.isfile(htmlpath)
+    if not ifExist:
+        print('[获取html]：\n%s' % surl)
+        html = requests.get(surl)
+        if html.status_code == 200:
+            with open(htmlpath, 'wb') as htmldoc:
+                htmldoc.write(html.content)
+        else:
+            return None
+    
+    print('[html path]：\n%s' % htmlpath)
+    return htmlpath
+
+# main函数，根据参数判断模式
 if __name__ == "__main__":
+    getifs()
     if len(sys.argv) > 1:
         downloadbyfile()
     else:
