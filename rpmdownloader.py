@@ -1,3 +1,4 @@
+# -*- coding:UTF-8 -*-
 import requests
 import time
 import re
@@ -8,7 +9,7 @@ import time
 from bs4 import BeautifulSoup
 
 ifdebug = False # debug模式只打印最后下载链接的请求头，不真正下载
-archs = ['aarch64', 'x86_64']
+archs = ['aarch64', 'x86_64-latest']
 systems = ['Fedora', 'OpenSuSE', 'CentOS']
 searchurl = 'http://rpmfind.net/linux/rpm2html/search.php?'
 downloadurl = 'http://rpmfind.net'
@@ -49,6 +50,7 @@ def getdownloadurl(name, system, arch):
     if link == None:
         addlog('[Failed to get download url]: ' + name + '-' + system + '-' + arch)
         print('[Failed to get download url]')
+    print('[Download url]:\n%s' % link)
     return link
     
 # CentOS系统的RPM从CentOS官方获取
@@ -57,10 +59,6 @@ def getcentosurl(name, arch):
     
     surl = 'http://buildlogs.centos.org/centos/7/os/' + arch + '/Packages/'
     htmlpath = gethtmlpath(surl, arch)
-    # 上面的语句必须先执行，这里修改arch是因为网站URL中arch为x86_64-latest
-    if arch == 'x86_64':
-        arch = 'x86_64-latest'
-    surl = 'http://buildlogs.centos.org/centos/7/os/' + arch + '/Packages/'
     res = None
     if htmlpath != None:
         with open(htmlpath, 'r') as html:
